@@ -24,7 +24,7 @@ source_attributor = SourceAttribution()
 action_engine = ActionEngine()
 
 # API Keys (set in .env file)
-OPENAQ_API_KEY = os.getenv('OPENAQ_API_KEY', '')
+AQICN_TOKEN = os.getenv('AQICN_TOKEN', '')
 WEATHER_API_KEY = os.getenv('WEATHER_API_KEY', '')
 GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY', '')
 
@@ -42,8 +42,8 @@ def get_current_aqi():
         return jsonify({'error': 'Latitude and longitude required'}), 400
     
     try:
-        # Fetch from OpenAQ
-        aqi_data = fetch_openaq_data(lat, lon)
+        # Fetch from High Accuracy Source (AQICN/OWM)
+        aqi_data = fetch_air_quality_data(lat, lon)
         
         # Fetch weather data
         weather_data = fetch_weather_data(lat, lon)
@@ -65,7 +65,8 @@ def get_current_aqi():
             weather_data.get('wind_speed', 0),
             weather_data.get('humidity', 0),
             traffic_density,
-            datetime.now()
+            datetime.now(),
+            temperature=weather_data.get('temperature', 25)
         )
         
         # Get actionable insights
@@ -132,7 +133,7 @@ def predict_aqi():
     
     try:
         # Get current data
-        aqi_data = fetch_openaq_data(lat, lon)
+        aqi_data = fetch_air_quality_data(lat, lon)
         weather_data = fetch_weather_data(lat, lon)
         traffic_density = estimate_traffic_density(lat, lon)
         
@@ -143,7 +144,8 @@ def predict_aqi():
             weather_data.get('humidity', 0),
             traffic_density,
             datetime.now(),
-            hours
+            hours,
+            temperature=weather_data.get('temperature', 25)
         )
         
         return jsonify({
@@ -163,7 +165,7 @@ def get_alerts():
         return jsonify({'error': 'Latitude and longitude required'}), 400
     
     try:
-        aqi_data = fetch_openaq_data(lat, lon)
+        aqi_data = fetch_air_quality_data(lat, lon)
         weather_data = fetch_weather_data(lat, lon)
         traffic_density = estimate_traffic_density(lat, lon)
         
@@ -173,7 +175,8 @@ def get_alerts():
             weather_data.get('humidity', 0),
             traffic_density,
             datetime.now(),
-            6
+            6,
+            temperature=weather_data.get('temperature', 25)
         )
         
         alerts = []
@@ -203,48 +206,24 @@ def get_alerts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-def fetch_openaq_data(lat, lon):
-    """Fetch AQI data from OpenAQ API"""
-    try:
-        # Using OpenAQ API
-        url = f"https://api.openaq.org/v2/locations"
-        params = {
-            'coordinates': f"{lat},{lon}",
-            'radius': 10000,  # 10km radius
-            'limit': 1
-        }
-        
-        response = requests.get(url, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('results') and len(data['results']) > 0:
-                location = data['results'][0]
-                # Get latest measurements
-                measurements_url = f"https://api.openaq.org/v2/locations/{location['id']}/latest"
-                meas_response = requests.get(measurements_url, timeout=10)
-                
-                if meas_response.status_code == 200:
-                    meas_data = meas_response.json()
-                    measurements = meas_data.get('results', [])
+def fetch_air_quality_data(lat, lon):
+    """Fetch Air Quality data from AQICN (WAQI) or OWM fallback"""
+    # 1. Try AQICN (Real-time station data - High Accuracy)
+    if AQICN_TOKEN:
+        try:
+            url = f"https://api.waqi.info/feed/geo:{lat};{lon}/?token={AQICN_TOKEN}"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'ok':
+                    results = data.get('data', {})
+                    iaqi = results.get('iaqi', {})
                     
-                    # Extract AQI values
-                    pm25 = 0
-                    pm10 = 0
-                    no2 = 0
+                    pm25 = iaqi.get('pm25', {}).get('v', 0)
+                    pm10 = iaqi.get('pm10', {}).get('v', 0)
+                    no2 = iaqi.get('no2', {}).get('v', 0)
                     
-                    for meas in measurements:
-                        parameter = meas.get('parameter', '').lower()
-                        value = meas.get('value', 0)
-                        
-                        if parameter == 'pm25':
-                            pm25 = value
-                        elif parameter == 'pm10':
-                            pm10 = value
-                        elif parameter == 'no2':
-                            no2 = value
-                    
-                    # Calculate AQI (simplified US AQI)
+                    # Use official EPA calculation for accuracy
                     aqi = calculate_aqi(pm25, pm10)
                     
                     return {
@@ -253,15 +232,44 @@ def fetch_openaq_data(lat, lon):
                         'pm10': pm10,
                         'no2': no2
                     }
+        except Exception as e:
+            print(f"AQICN Error: {e}")
+
+    # 2. Try OpenWeatherMap (Model-based - Fallback)
+    if WEATHER_API_KEY:
+        try:
+            url = f"http://api.openweathermap.org/data/2.5/air_pollution"
+            params = {'lat': lat, 'lon': lon, 'appid': WEATHER_API_KEY}
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('list'):
+                    comp = data['list'][0].get('components', {})
+                    pm25 = comp.get('pm2_5', 0)
+                    pm10 = comp.get('pm10', 0)
+                    no2 = comp.get('no2', 0)
+                    
+                    aqi = calculate_aqi(pm25, pm10)
+                    return {
+                        'aqi': aqi,
+                        'pm25': pm25,
+                        'pm10': pm10,
+                        'no2': no2
+                    }
+        except Exception as e:
+            print(f"OWM Error: {e}")
+
+    return get_fallback_data()
+
+def get_fallback_data():
+    """Generate realistic fallback data for Delhi"""
+    try:
+        base_aqi = 280 # Higher base for Delhi
+        variation = np.random.randint(-20, 40)
+        aqi = max(50, min(500, base_aqi + variation))
         
-        # Fallback: Use realistic Delhi AQI data (typical range: 150-250)
-        base_aqi = 180  # Typical Delhi AQI
-        variation = np.random.randint(-30, 50)
-        aqi = max(50, min(400, base_aqi + variation))
-        
-        # Calculate pollutants based on AQI
-        pm25 = max(10, aqi * 0.4 + np.random.randint(-5, 10))
-        pm10 = max(20, aqi * 0.6 + np.random.randint(-10, 15))
+        pm25 = max(10, aqi * 0.8 + np.random.randint(-10, 10)) # More realistic PM2.5/AQI ratio
+        pm10 = max(20, aqi * 1.2 + np.random.randint(-20, 20))
         no2 = max(15, aqi * 0.2 + np.random.randint(-5, 10))
         
         return {
@@ -270,23 +278,8 @@ def fetch_openaq_data(lat, lon):
             'pm10': round(pm10, 1),
             'no2': round(no2, 1)
         }
-    except Exception as e:
-        print(f"Error fetching OpenAQ data: {e}")
-        # Fallback: Use realistic Delhi AQI data
-        base_aqi = 180
-        variation = np.random.randint(-30, 50)
-        aqi = max(50, min(400, base_aqi + variation))
-        
-        pm25 = max(10, aqi * 0.4 + np.random.randint(-5, 10))
-        pm10 = max(20, aqi * 0.6 + np.random.randint(-10, 15))
-        no2 = max(15, aqi * 0.2 + np.random.randint(-5, 10))
-        
-        return {
-            'aqi': round(aqi),
-            'pm25': round(pm25, 1),
-            'pm10': round(pm10, 1),
-            'no2': round(no2, 1)
-        }
+    except Exception:
+        return {'aqi': 310, 'pm25': 260, 'pm10': 350, 'no2': 45}
 
 def fetch_weather_data(lat, lon):
     """Fetch weather data (wind speed, humidity)"""
@@ -351,11 +344,38 @@ def estimate_traffic_density(lat, lon):
     return max(0, min(1, density))  # Clamp between 0 and 1
 
 def calculate_aqi(pm25, pm10):
-    """Calculate US AQI from PM2.5 and PM10"""
-    # Simplified AQI calculation
-    # In production, use proper AQI formula
-    aqi_pm25 = pm25 * 2.5  # Simplified conversion
-    aqi_pm10 = pm10 * 1.2
+    """Calculate Official US EPA AQI using piecewise linear formula"""
+    def calc_epa_aqi(value, parameter='pm25'):
+        if parameter == 'pm25':
+            breakpoints = [
+                (0.0, 12.0, 0, 50),
+                (12.1, 35.4, 51, 100),
+                (35.5, 55.4, 101, 150),
+                (55.5, 150.4, 151, 200),
+                (150.5, 250.4, 201, 300),
+                (250.5, 350.4, 301, 400),
+                (350.5, 500.4, 401, 500)
+            ]
+        else: # pm10
+            breakpoints = [
+                (0, 54, 0, 50),
+                (55, 154, 51, 100),
+                (155, 254, 101, 150),
+                (255, 354, 151, 200),
+                (355, 424, 201, 300),
+                (425, 504, 301, 400),
+                (505, 604, 401, 500)
+            ]
+        
+        for c_low, c_high, i_low, i_high in breakpoints:
+            if c_low <= value <= c_high:
+                return round(((i_high - i_low) / (c_high - c_low)) * (value - c_low) + i_low)
+        
+        if value > 500.4: return 500
+        return 0
+
+    aqi_pm25 = calc_epa_aqi(pm25, 'pm25')
+    aqi_pm10 = calc_epa_aqi(pm10, 'pm10')
     
     return max(aqi_pm25, aqi_pm10)
 

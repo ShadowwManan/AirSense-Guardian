@@ -104,8 +104,8 @@ const Dashboard = ({ onDataUpdate }) => {
     }
   };
 
-  const handleSearch = async () => {
-    const input = searchInput.trim().toLowerCase();
+  const handleSearch = async (overrideInput = null) => {
+    const input = (overrideInput || searchInput).trim().toLowerCase();
     if (!input) return;
 
     setLoading(true);
@@ -156,7 +156,7 @@ const Dashboard = ({ onDataUpdate }) => {
 
   const selectState = (stateName) => {
     setSearchInput(stateName);
-    setTimeout(handleSearch, 100);
+    handleSearch(stateName);
   };
 
   const getAQIStatus = (aqi) => {
@@ -183,8 +183,8 @@ const Dashboard = ({ onDataUpdate }) => {
               <button
                 onClick={() => setSearchType('city')}
                 className={`px-4 py-2 font-bold rounded-lg transition-colors ${searchType === 'city'
-                    ? 'bg-brand-green text-white hover:bg-[#3d8b50]'
-                    : 'glass-card hover:bg-white/10 font-medium text-white'
+                  ? 'bg-brand-green text-white hover:bg-[#3d8b50]'
+                  : 'glass-card hover:bg-white/10 font-medium text-white'
                   }`}
               >
                 <i className="fas fa-city mr-2"></i>City
@@ -192,8 +192,8 @@ const Dashboard = ({ onDataUpdate }) => {
               <button
                 onClick={() => setSearchType('state')}
                 className={`px-4 py-2 font-bold rounded-lg transition-colors ${searchType === 'state'
-                    ? 'bg-brand-green text-white hover:bg-[#3d8b50]'
-                    : 'glass-card hover:bg-white/10 font-medium text-white'
+                  ? 'bg-brand-green text-white hover:bg-[#3d8b50]'
+                  : 'glass-card hover:bg-white/10 font-medium text-white'
                   }`}
               >
                 <i className="fas fa-map mr-2"></i>State
@@ -247,9 +247,9 @@ const Dashboard = ({ onDataUpdate }) => {
                 </p>
               </div>
               <div className={`px-5 py-2 rounded-lg font-bold text-sm tracking-wider uppercase ${status.color === 'red' ? 'bg-red-500/10 border border-red-500/40 text-red-400' :
-                  status.color === 'orange' ? 'bg-orange-500/10 border border-orange-500/40 text-orange-400' :
-                    status.color === 'yellow' ? 'bg-yellow-500/10 border border-yellow-500/40 text-yellow-400' :
-                      'bg-green-500/10 border border-green-500/40 text-green-400'
+                status.color === 'orange' ? 'bg-orange-500/10 border border-orange-500/40 text-orange-400' :
+                  status.color === 'yellow' ? 'bg-yellow-500/10 border border-yellow-500/40 text-yellow-400' :
+                    'bg-green-500/10 border border-green-500/40 text-green-400'
                 }`}>
                 {status.text}
               </div>

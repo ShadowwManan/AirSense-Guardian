@@ -53,112 +53,120 @@ class AQIPredictor:
         )
     
     def _train_with_synthetic_data(self):
-        """Train model with synthetic data (for demo purposes)"""
-        # Generate synthetic training data
+        """Train model with advanced non-linear cyclical patterns (v3)"""
         np.random.seed(42)
-        n_samples = 1000
+        n_samples = 5000
         
-        # Features: past_aqi, wind_speed, humidity, traffic_density, hour, day_of_week
-        X = np.random.rand(n_samples, 6)
-        X[:, 0] = X[:, 0] * 300  # past_aqi: 0-300
-        X[:, 1] = X[:, 1] * 20   # wind_speed: 0-20 km/h
-        X[:, 2] = X[:, 2] * 100  # humidity: 0-100%
-        X[:, 3] = X[:, 3]        # traffic_density: 0-1
-        X[:, 4] = X[:, 4] * 24   # hour: 0-23
-        X[:, 5] = X[:, 5] * 7    # day_of_week: 0-6
+        # Features: aqi(0), lags(1-3), rolling(4-5), hour_sin(6), hour_cos(7), month_sin(8), month_cos(9), wind(10), hum(11), temp(12), stagnation(13)
+        X = np.random.rand(n_samples, 14)
         
-        # Target: future_aqi (with some logic)
-        y = X[:, 0].copy()  # Start with past AQI
+        # Scales
+        X[:, 0] = X[:, 0] * 450   # current_aqi
+        X[:, 1] = X[:, 0] * 0.99  # lag1
+        X[:, 2] = X[:, 0] * 0.97  # lag2
+        X[:, 3] = X[:, 0] * 0.95  # lag3
+        X[:, 10] = X[:, 10] * 35  # wind
+        X[:, 11] = X[:, 11] * 100 # humidity
+        X[:, 12] = X[:, 12] * 45  # temp
         
-        # Apply effects
-        y -= X[:, 1] * 2  # Higher wind reduces AQI
-        y += (1 - X[:, 3]) * 30  # Higher traffic increases AQI
-        y += np.sin(X[:, 4] * np.pi / 12) * 20  # Time of day effect
+        # Cyclical Time (Hour 0-23, Month 1-12)
+        hours = np.random.randint(0, 24, n_samples)
+        X[:, 6] = np.sin(2 * np.pi * hours / 24)
+        X[:, 7] = np.cos(2 * np.pi * hours / 24)
         
-        # Add noise
-        y += np.random.normal(0, 10, n_samples)
-        y = np.clip(y, 0, 500)  # Clamp to valid AQI range
+        months = np.random.randint(1, 13, n_samples)
+        X[:, 8] = np.sin(2 * np.pi * months / 12)
+        X[:, 9] = np.cos(2 * np.pi * months / 12)
         
-        # Train model
-        self.model.fit(X, y)
+        # Stagnation Index: High humidity + Low wind
+        # Normalized: (hum/100) * (1 - wind/40)
+        X[:, 13] = (X[:, 11]/100.0) * (1.0 - X[:, 10]/40.0)
+
+        # TARGET: Delta logic with environmental physics
+        y_delta = np.zeros(n_samples)
+        for i in range(n_samples):
+            # 1. Physics: Dispersion vs Accumulation
+            # High wind + Low stagnation = Strong Drop
+            dispersion = (X[i, 10] ** 1.3) * -0.6
+            accumulation = (X[i, 13] * 50) 
+            
+            # 2. Daily Traffic Cycle (using actual hours)
+            h = hours[i]
+            traffic = 35 if (8 <= h <= 10 or 17 <= h <= 19) else 5
+            
+            # 3. Monthly seasonality (Pollution higher in Winter months: 10, 11, 12, 1)
+            m = months[i]
+            seasonal_multiplier = 1.5 if m in [10, 11, 12, 1] else 0.8
+            
+            # 4. Reversion to Mean (Negative Feedback)
+            # If AQI is already huge (>350), it's more likely to drop unless trapped
+            reversion = (200 - X[i, 0]) * 0.08
+            
+            delta = reversion + dispersion + (accumulation * seasonal_multiplier) + (traffic * seasonal_multiplier)
+            y_delta[i] = delta + np.random.normal(0, 4)
+
+        # Train advanced model
+        self.model.fit(X, y_delta)
         
-        # Save model
+        # Save model and metadata
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
         with open(self.model_path, 'wb') as f:
             pickle.dump(self.model, f)
-    
+            
+        metadata = {
+            'feature_columns': [
+                'aqi', 'aqi_lag1', 'aqi_lag2', 'aqi_lag3', 
+                'aqi_rolling_mean_3h', 'aqi_rolling_mean_6h',
+                'hour_sin', 'hour_cos', 'month_sin', 'month_cos',
+                'wind_speed', 'humidity', 'temperature', 'stagnation_index'
+            ],
+            'last_trained': datetime.now().isoformat(),
+            'model_type': 'DeltaRegressor_Premium_v3'
+        }
+        with open(self.metadata_path, 'w') as f:
+            json.dump(metadata, f)
+
     def _prepare_features(self, current_aqi, wind_speed, humidity, traffic_density, current_time, 
-                         aqi_history=None):
+                         aqi_history=None, temperature=25):
         """
-        Prepare features for prediction based on model's expected features
+        Prepare 14 advanced features with Cyclical Encoding
         """
         hour = current_time.hour
-        day_of_week = current_time.weekday()
         month = current_time.month
-        is_weekend = 1 if day_of_week >= 5 else 0
         
-        # If we have feature columns from trained model, use them
-        if self.feature_cols:
-            # Create feature vector matching trained model
-            features = {}
-            
-            # Current AQI and lags
-            features['aqi'] = current_aqi
-            if aqi_history and len(aqi_history) >= 3:
-                features['aqi_lag1'] = aqi_history[-1] if len(aqi_history) > 0 else current_aqi
-                features['aqi_lag2'] = aqi_history[-2] if len(aqi_history) > 1 else current_aqi
-                features['aqi_lag3'] = aqi_history[-3] if len(aqi_history) > 2 else current_aqi
-            else:
-                features['aqi_lag1'] = current_aqi
-                features['aqi_lag2'] = current_aqi
-                features['aqi_lag3'] = current_aqi
-            
-            # Rolling means
-            if aqi_history and len(aqi_history) >= 3:
-                features['aqi_rolling_mean_3h'] = np.mean(aqi_history[-3:])
-            else:
-                features['aqi_rolling_mean_3h'] = current_aqi
-            
-            if aqi_history and len(aqi_history) >= 6:
-                features['aqi_rolling_mean_6h'] = np.mean(aqi_history[-6:])
-            else:
-                features['aqi_rolling_mean_6h'] = current_aqi
-            
-            # Time features
-            features['hour'] = hour
-            features['day_of_week'] = day_of_week
-            features['month'] = month
-            features['is_weekend'] = is_weekend
-            
-            # Weather features
-            features['wind_speed'] = wind_speed
-            features['humidity'] = humidity
-            features['temperature'] = 25  # Default if not available
-            # Note: pressure is not in trained model features, so we don't include it
-            
-            # Build feature array in correct order
-            feature_array = []
-            for col in self.feature_cols:
-                if col in features:
-                    feature_array.append(features[col])
-                else:
-                    # Default value for missing features
-                    feature_array.append(0)
-            
-            return np.array([feature_array])
-        else:
-            # Fallback to simple features (for backward compatibility)
-            return np.array([[
-                current_aqi,
-                wind_speed,
-                humidity,
-                traffic_density,
-                hour,
-                day_of_week
-            ]])
+        # Cyclical Encoding
+        hour_sin = np.sin(2 * np.pi * hour / 24)
+        hour_cos = np.cos(2 * np.pi * hour / 24)
+        month_sin = np.sin(2 * np.pi * month / 12)
+        month_cos = np.cos(2 * np.pi * month / 12)
+        
+        # Stagnation Index (0-1)
+        stagnation = (humidity/100.0) * (1.0 - min(wind_speed, 40)/40.0)
+        
+        # History
+        hist = aqi_history if aqi_history and len(aqi_history) >= 6 else [current_aqi] * 6
+        
+        features = [
+            float(current_aqi),
+            float(hist[-1]), # lag1
+            float(hist[-2]), # lag2
+            float(hist[-3]), # lag3
+            float(np.mean(hist[-3:])), 
+            float(np.mean(hist[-6:])),
+            float(hour_sin),
+            float(hour_cos),
+            float(month_sin),
+            float(month_cos),
+            float(wind_speed),
+            float(humidity),
+            float(temperature),
+            float(stagnation)
+        ]
+        
+        return np.array([features])
     
-    def predict(self, current_aqi, wind_speed, humidity, traffic_density, current_time, aqi_history=None):
-        """Predict AQI for next 3 hours"""
+    def predict(self, current_aqi, wind_speed, humidity, traffic_density, current_time, aqi_history=None, temperature=25):
+        """Predict AQI for next 3 hours using Delta-Logic"""
         predictions = []
         current_aqi_val = current_aqi
         
@@ -166,28 +174,33 @@ class AQIPredictor:
             # Prepare features
             features = self._prepare_features(
                 current_aqi_val, wind_speed, humidity, traffic_density, 
-                current_time + timedelta(hours=i-1), aqi_history
+                current_time + timedelta(hours=i-1), aqi_history, temperature
             )
             
-            # Predict
-            pred_aqi = self.model.predict(features)[0]
+            # Predict the DELTA
+            delta = self.model.predict(features)[0]
+            
+            # Calculate next AQI
+            next_aqi = current_aqi_val + delta
+            next_aqi = float(np.clip(next_aqi, 0, 500))
+            
             pred_time = current_time + timedelta(hours=i)
             
             predictions.append({
                 'time': pred_time.isoformat(),
-                'aqi': float(np.clip(pred_aqi, 0, 500)),
+                'aqi': next_aqi,
                 'hours_ahead': i
             })
             
             # Update for next prediction
-            current_aqi_val = pred_aqi
+            current_aqi_val = next_aqi
             if aqi_history is not None:
-                aqi_history = list(aqi_history) + [pred_aqi]
+                aqi_history = list(aqi_history) + [next_aqi]
         
         return predictions
     
-    def predict_multiple_hours(self, current_aqi, wind_speed, humidity, traffic_density, current_time, hours=6, aqi_history=None):
-        """Predict AQI for multiple hours ahead"""
+    def predict_multiple_hours(self, current_aqi, wind_speed, humidity, traffic_density, current_time, hours=6, aqi_history=None, temperature=25):
+        """Predict AQI for multiple hours ahead using Delta-Logic"""
         predictions = []
         current_aqi_val = current_aqi
         
@@ -195,25 +208,27 @@ class AQIPredictor:
             # Prepare features
             features = self._prepare_features(
                 current_aqi_val, wind_speed, humidity, traffic_density,
-                current_time + timedelta(hours=i-1), aqi_history
+                current_time + timedelta(hours=i-1), aqi_history, temperature
             )
             
-            # Predict
-            pred_aqi = self.model.predict(features)[0]
-            pred_time = current_time + timedelta(hours=i)
+            # Predict the DELTA
+            delta = self.model.predict(features)[0]
             
-            # Update hour for next iteration
-            next_hour = (current_time.hour + i) % 24
+            # Calculate next AQI
+            next_aqi = current_aqi_val + delta
+            next_aqi = float(np.clip(next_aqi, 0, 500))
+            
+            pred_time = current_time + timedelta(hours=i)
             
             predictions.append({
                 'time': pred_time.isoformat(),
-                'aqi': float(np.clip(pred_aqi, 0, 500)),
+                'aqi': next_aqi,
                 'hours_ahead': i
             })
             
             # Use predicted AQI for next prediction
-            current_aqi_val = pred_aqi
+            current_aqi_val = next_aqi
             if aqi_history is not None:
-                aqi_history = list(aqi_history) + [pred_aqi]
+                aqi_history = list(aqi_history) + [next_aqi]
         
         return predictions

@@ -20,10 +20,17 @@ class MyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        # Serve index.html for root path and all routes
-        if self.path == '/' or self.path == '/index.html' or not self.path.startswith('/api'):
-            # Serve index.html for all non-API routes (SPA support)
+        # Serve index.html for root path
+        if self.path == '/':
             self.path = '/index.html'
+            
+        # Extract the local file path (remove leading slash or query params if any)
+        local_path = self.path.lstrip('/').split('?')[0]
+        
+        # If the file doesn't exist and it's not an API or static API route, serve index.html
+        if local_path and not os.path.exists(local_path) and not self.path.startswith('/api'):
+            self.path = '/index.html'
+            
         return super().do_GET()
     
     def log_message(self, format, *args):
