@@ -37,11 +37,11 @@ class AQIPredictor:
             except Exception as e:
                 print(f"Error loading model: {e}. Creating new model...")
                 self.model = self._create_model()
-                self._train_with_synthetic_data()
+                self._train_model()
         else:
             print("No trained model found. Creating model with synthetic data...")
             self.model = self._create_model()
-            self._train_with_synthetic_data()
+            self._train_model()
     
     def _create_model(self):
         """Create a new Random Forest model"""
@@ -51,6 +51,72 @@ class AQIPredictor:
             random_state=42,
             n_jobs=-1
         )
+
+    def _train_model(self):
+        """Attempt to train with real data, fallback to synthetic."""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        data_path = os.path.join(script_dir, '..', 'data', 'aqi_training_data.csv')
+        
+        trained_with_real = False
+        if os.path.exists(data_path) and os.path.getsize(data_path) > 100:
+            try:
+                df = pd.read_csv(data_path)
+                if len(df) > 10 and 'aqi' in df.columns:
+                    print(f"Training model with real dataset ({len(df)} rows)...")
+                    # Calculate target delta
+                    df['aqi_next'] = df['aqi'].shift(-1)
+                    
+                    # Create lag features
+                    df['lag1'] = df['aqi'].shift(1)
+                    df['lag2'] = df['aqi'].shift(2)
+                    df['lag3'] = df['aqi'].shift(3)
+                    df['rolling_3'] = df['aqi'].rolling(3).mean()
+                    df['rolling_6'] = df['aqi'].rolling(6).mean()
+                    
+                    df = df.dropna()
+                    
+                    X_real = []
+                    y_real = []
+                    
+                    for _, row in df.iterrows():
+                        timestamp = row.get('timestamp')
+                        dt = pd.to_datetime(timestamp) if pd.notna(timestamp) else datetime.now()
+                        
+                        wind = row.get('wind_speed', 10.0) if 'wind_speed' in row else 10.0
+                        hum = row.get('humidity', 50.0) if 'humidity' in row else 50.0
+                        temp = row.get('temperature', 25.0) if 'temperature' in row else 25.0
+                        
+                        hour_sin = np.sin(2 * np.pi * dt.hour / 24)
+                        hour_cos = np.cos(2 * np.pi * dt.hour / 24)
+                        month_sin = np.sin(2 * np.pi * dt.month / 12)
+                        month_cos = np.cos(2 * np.pi * dt.month / 12)
+                        
+                        stagnation = (hum / 100.0) * (1.0 - min(wind, 40) / 40.0)
+                        
+                        features = [
+                            float(row['aqi']), float(row['lag1']), float(row['lag2']), float(row['lag3']),
+                            float(row['rolling_3']), float(row['rolling_6']),
+                            float(hour_sin), float(hour_cos), float(month_sin), float(month_cos),
+                            float(wind), float(hum), float(temp), float(stagnation)
+                        ]
+                        
+                        X_real.append(features)
+                        y_real.append(float(row['aqi_next'] - row['aqi']))
+                    
+                    self.model.fit(np.array(X_real), np.array(y_real))
+                    trained_with_real = True
+                    print("Successfully trained with real CSV data!")
+                    
+                    # Save model and metadata
+                    os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+                    with open(self.model_path, 'wb') as f:
+                        pickle.dump(self.model, f)
+            except Exception as e:
+                print(f"Could not train with real data: {e}")
+                
+        if not trained_with_real:
+            print("Falling back to synthetic data training...")
+            self._train_with_synthetic_data()
     
     def _train_with_synthetic_data(self):
         """Train model with advanced non-linear cyclical patterns (v3)"""
@@ -103,7 +169,7 @@ class AQIPredictor:
             reversion = (200 - X[i, 0]) * 0.08
             
             delta = reversion + dispersion + (accumulation * seasonal_multiplier) + (traffic * seasonal_multiplier)
-            y_delta[i] = delta + np.random.normal(0, 4)
+            y_delta[i] = (delta * 0.5) + np.random.normal(0, 2)
 
         # Train advanced model
         self.model.fit(X, y_delta)
@@ -179,6 +245,11 @@ class AQIPredictor:
             
             # Predict the DELTA
             delta = self.model.predict(features)[0]
+            
+            # DAMPEN the delta to prevent wild swings away from real live AQI
+            # Max 15% change per hour
+            max_delta = max(10, current_aqi_val * 0.15)
+            delta = np.clip(delta, -max_delta, max_delta)
             
             # Calculate next AQI
             next_aqi = current_aqi_val + delta
