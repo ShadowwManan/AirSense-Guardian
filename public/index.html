@@ -1,0 +1,769 @@
+<!--
+  Author: Daksha009
+  Repo: https://github.com/Daksha009/AirSense-Guardian.git
+-->
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AirSight | Intelligent Air Monitoring</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.0/vanilla-tilt.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700&family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        bg: {
+                            main: '#050806', // Very Dark Greenish Black
+                            card: 'rgba(20, 25, 22, 0.6)', 
+                        },
+                        brand: {
+                            green: '#49a760',
+                            accent: '#00ff9d',
+                            text: '#ffffff',
+                            muted: '#94a3b8',
+                            warning: '#eab308',
+                            danger: '#ef4444'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                        display: ['Space Grotesk', 'sans-serif'],
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #050806;
+            background-image: radial-gradient(circle at 50% 0%, #11241a 0%, #050806 80%);
+            color: #ffffff;
+            overflow-x: hidden;
+        }
+
+        /* Dropping Pollutants Canvas */
+        #pollutant-canvas {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: -1;
+            opacity: 0.4;
+            pointer-events: none;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .glass-card:hover {
+            border-color: rgba(73, 167, 96, 0.4);
+            box-shadow: 0 0 30px rgba(73, 167, 96, 0.15);
+        }
+
+        .gradient-text {
+            background: linear-gradient(to right, #ffffff, #49a760, #00ff9d);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* 3D Wireframe Globe CSS */
+        .globe {
+            width: 500px;
+            height: 500px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0.1;
+            z-index: -1;
+            border-radius: 50%;
+            background: repeating-linear-gradient(90deg, #49a760 0 1px, transparent 1px 40px);
+            animation: spin 60s linear infinite;
+        }
+        .globe::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: repeating-linear-gradient(180deg, #49a760 0 1px, transparent 1px 40px);
+        }
+        @keyframes spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <canvas id="pollutant-canvas"></canvas>
+
+    <nav class="fixed w-full z-50 py-4 backdrop-blur-md bg-[#050806]/70 border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-6 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg overflow-hidden border border-brand-green/50 shadow-[0_0_15px_rgba(73,167,96,0.5)] bg-black flex items-center justify-center">
+                     <img src="logo.png" alt="AirSight" class="w-full h-full object-cover">
+                </div>
+                <span class="font-display font-bold text-2xl tracking-wide text-white">AirSight</span>
+            </div>
+            
+            <div class="hidden md:flex gap-8 text-sm font-medium text-gray-400">
+                <a href="#dashboard" class="hover:text-brand-accent transition-colors">Dashboard</a>
+                <a href="#predictions" class="hover:text-brand-accent transition-colors">Forecast</a>
+                <a href="#future-scope" class="text-brand-accent hover:text-white transition-colors border border-brand-green/30 px-3 py-1 rounded-full bg-brand-green/10">
+                    <i class="fas fa-microchip mr-1"></i> Future Tech
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="relative min-h-screen flex flex-col justify-center items-center text-center px-4 overflow-hidden">
+        <div class="globe"></div>
+
+        <div class="w-28 h-28 mb-8 animate-float relative z-10" data-aos="zoom-in">
+             <img src="logo.png" alt="AirSight" class="w-full h-full object-contain drop-shadow-[0_0_40px_rgba(73,167,96,0.6)]">
+        </div>
+
+        <h1 class="font-display text-5xl md:text-8xl font-bold mb-6 leading-tight" data-aos="fade-up">
+            Intelligent <br/><span class="gradient-text">Air Monitoring.</span>
+        </h1>
+        <p class="text-lg text-gray-400 max-w-2xl mx-auto mb-10" data-aos="fade-up" data-aos-delay="100">
+            Real-time environmental data with AI-powered predictions. <br>The future of clean air starts with better data.
+        </p>
+
+        <div class="flex flex-col sm:flex-row gap-4 z-10" data-aos="fade-up" data-aos-delay="200">
+            <button onclick="document.getElementById('dashboard').scrollIntoView({behavior: 'smooth'})" class="px-8 py-4 bg-brand-green text-white font-bold rounded-xl hover:bg-[#3d8b50] transition-all shadow-[0_0_25px_rgba(73,167,96,0.4)]">
+                Check My City
+            </button>
+            <button onclick="document.getElementById('future-scope').scrollIntoView({behavior: 'smooth'})" class="px-8 py-4 glass-card hover:bg-white/10 font-medium text-white transition-all">
+                Our Solution
+            </button>
+        </div>
+    </section>
+
+    <section id="dashboard" class="py-20 px-4 relative z-10">
+        <div class="max-w-7xl mx-auto">
+            
+            <div class="relative max-w-2xl mx-auto mb-16" data-aos="fade-up">
+                <div class="flex flex-col gap-4">
+                    <!-- Search Type Selector -->
+                    <div class="flex gap-2 justify-center">
+                        <button id="searchTypeCity" onclick="setSearchType('city')" class="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-[#3d8b50] transition-colors">
+                            <i class="fas fa-city mr-2"></i>City
+                        </button>
+                        <button id="searchTypeState" onclick="setSearchType('state')" class="px-4 py-2 glass-card hover:bg-white/10 font-medium text-white transition-colors">
+                            <i class="fas fa-map mr-2"></i>State
+                        </button>
+                    </div>
+                    
+                    <!-- Search Bar -->
+                    <div class="flex items-center bg-[#0e110f] border border-brand-green/30 rounded-2xl p-2 shadow-[0_0_30px_rgba(73,167,96,0.1)]">
+                        <i class="fas fa-search text-brand-green ml-4 text-xl"></i>
+                        <input type="text" id="searchInput" placeholder="Enter City Name (e.g. Delhi, Mumbai)" 
+                               class="w-full bg-transparent border-none text-white text-lg px-4 py-3 focus:ring-0 placeholder-gray-500 outline-none">
+                        <button onclick="handleSearch()" class="bg-brand-green text-white font-bold px-6 py-3 rounded-xl hover:bg-[#3d8b50] transition-colors">
+                            Analyze
+                        </button>
+                    </div>
+                    
+                    <!-- Quick State Selector -->
+                    <div id="stateSelector" class="hidden flex-wrap gap-2 justify-center">
+                        <button onclick="selectState('Delhi')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Delhi</button>
+                        <button onclick="selectState('Maharashtra')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Maharashtra</button>
+                        <button onclick="selectState('Karnataka')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Karnataka</button>
+                        <button onclick="selectState('West Bengal')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">West Bengal</button>
+                        <button onclick="selectState('Tamil Nadu')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Tamil Nadu</button>
+                        <button onclick="selectState('Telangana')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Telangana</button>
+                        <button onclick="selectState('Gujarat')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Gujarat</button>
+                        <button onclick="selectState('Rajasthan')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Rajasthan</button>
+                        <button onclick="selectState('Uttar Pradesh')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Uttar Pradesh</button>
+                        <button onclick="selectState('Punjab')" class="px-3 py-1 glass-card hover:bg-brand-green/20 text-sm text-gray-300 rounded-lg transition-colors">Punjab</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                <div class="lg:col-span-2 glass-card p-10 relative overflow-hidden group" data-tilt data-aos="fade-right">
+                    <div class="absolute right-[-20px] top-[-20px] w-64 h-64 bg-brand-green/10 blur-[80px] rounded-full group-hover:bg-brand-green/20 transition-all"></div>
+                    
+                    <div class="flex justify-between items-start mb-8">
+                        <div>
+                            <h2 id="cityName" class="text-4xl font-display font-bold mb-1">New Delhi</h2>
+                            <p class="text-sm text-brand-accent flex items-center gap-2">
+                                <span class="w-2 h-2 bg-brand-accent rounded-full animate-pulse"></span> Live Sensors
+                            </p>
+                        </div>
+                        <div id="aqiStatusBox" class="px-5 py-2 bg-yellow-500/10 border border-yellow-500/40 text-yellow-400 rounded-lg font-bold text-sm tracking-wider uppercase">
+                            Moderate
+                        </div>
+                    </div>
+
+                    <div class="flex items-baseline gap-4 mb-4">
+                        <span id="aqiValue" class="text-9xl font-display font-bold text-white tracking-tighter leading-none">134</span>
+                        <div class="flex flex-col">
+                            <span class="text-xl text-gray-400">AQI</span>
+                            <span class="text-xs text-gray-500">PM2.5 Dominant</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-4">
+                    <div class="glass-card p-6 flex items-center justify-between hover:bg-white/5 transition-colors" data-aos="fade-left" data-aos-delay="100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-blue-500/10 rounded-lg text-blue-400"><i class="fas fa-wind"></i></div>
+                            <span class="text-gray-300">PM2.5</span>
+                        </div>
+                        <span class="font-bold text-2xl" data-pollutant="pm25">45</span>
+                    </div>
+                    <div class="glass-card p-6 flex items-center justify-between hover:bg-white/5 transition-colors" data-aos="fade-left" data-aos-delay="200">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-purple-500/10 rounded-lg text-purple-400"><i class="fas fa-smog"></i></div>
+                            <span class="text-gray-300">PM10</span>
+                        </div>
+                        <span class="font-bold text-2xl" data-pollutant="pm10">82</span>
+                    </div>
+                    <div class="glass-card p-6 flex items-center justify-between hover:bg-white/5 transition-colors" data-aos="fade-left" data-aos-delay="300">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-orange-500/10 rounded-lg text-orange-400"><i class="fas fa-temperature-half"></i></div>
+                            <span class="text-gray-300">Temp</span>
+                        </div>
+                        <span class="font-bold text-2xl" data-pollutant="temp">28°C</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="predictions" class="py-10 px-4">
+        <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <div class="glass-card p-8" data-aos="fade-up">
+                <h3 class="text-xl font-display font-bold mb-6 flex items-center gap-2">
+                    <i class="fas fa-chart-line text-brand-accent"></i> 24-Hour AI Forecast
+                </h3>
+                <div class="h-64 w-full">
+                    <canvas id="predictionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass-card p-8" data-aos="fade-up" data-aos-delay="100">
+                <h3 class="text-xl font-display font-bold mb-6 flex items-center gap-2">
+                    <i class="fas fa-heart-pulse text-red-400"></i> Health Alerts
+                </h3>
+                
+                <div class="bg-yellow-500/10 border-l-4 border-yellow-500 p-4 mb-6 rounded-r-lg">
+                    <h4 class="font-bold text-yellow-500 mb-1">Moderate Air Quality</h4>
+                    <p class="text-sm text-gray-400">Sensitive groups should limit prolonged outdoor exertion.</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-white/5 p-4 rounded-xl text-center hover:bg-white/10 transition-colors">
+                        <i class="fas fa-mask text-2xl text-gray-400 mb-2"></i>
+                        <p class="text-sm font-bold text-gray-300">Mask</p>
+                        <p class="text-xs text-gray-500">Optional</p>
+                    </div>
+                    <div class="bg-white/5 p-4 rounded-xl text-center hover:bg-white/10 transition-colors">
+                        <i class="fas fa-door-open text-2xl text-brand-green mb-2"></i>
+                        <p class="text-sm font-bold text-gray-300">Ventilation</p>
+                        <p class="text-xs text-gray-500">Recommended</p>
+                    </div>
+                    <div class="bg-white/5 p-4 rounded-xl text-center hover:bg-white/10 transition-colors">
+                        <i class="fas fa-person-running text-2xl text-blue-400 mb-2"></i>
+                        <p class="text-sm font-bold text-gray-300">Sports</p>
+                        <p class="text-xs text-gray-500">Safe</p>
+                    </div>
+                    <div class="bg-white/5 p-4 rounded-xl text-center hover:bg-white/10 transition-colors">
+                        <i class="fas fa-fan text-2xl text-gray-400 mb-2"></i>
+                        <p class="text-sm font-bold text-gray-300">Purifier</p>
+                        <p class="text-xs text-gray-500">Low Mode</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="live-map" class="py-10 px-4">
+        <div class="max-w-7xl mx-auto">
+             <div class="mb-6" data-aos="fade-up">
+                <h2 class="text-2xl font-display font-bold">Global Monitoring Network</h2>
+            </div>
+            <div class="glass-card p-2 h-[450px] relative overflow-hidden" data-aos="zoom-in">
+                <div id="map" class="w-full h-full rounded-xl z-10"></div>
+            </div>
+        </div>
+    </section>
+
+    <section id="future-scope" class="py-24 px-4 relative overflow-hidden">
+        <div class="absolute top-0 left-0 w-full h-full bg-brand-green/5 -z-10"></div>
+        <div class="absolute -right-20 top-40 w-96 h-96 bg-brand-green/10 blur-[100px] rounded-full"></div>
+
+        <div class="max-w-7xl mx-auto">
+            <div class="text-center mb-16">
+                <span class="text-brand-accent font-mono text-sm tracking-widest uppercase mb-2 block">Our Future Vision</span>
+                <h2 class="text-4xl md:text-5xl font-display font-bold mb-4">Mobile Sensor Technology</h2>
+                <p class="text-gray-400 max-w-2xl mx-auto">We are developing hardware to bridge the data gap. Turning every vehicle into a monitoring station.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div class="glass-card p-8 text-center relative border border-brand-green/40 shadow-[0_0_20px_rgba(73,167,96,0.15)] hover:-translate-y-2 transition-transform duration-300">
+                    <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-accent text-black text-[10px] font-bold px-3 py-1 rounded-full">PROTOTYPE</div>
+                    <div class="w-16 h-16 mx-auto bg-brand-green rounded-full flex items-center justify-center text-2xl mb-6 shadow-lg shadow-brand-green/30">
+                        <i class="fas fa-microchip text-black"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">AirSight IoT Node</h3>
+                    <p class="text-gray-400 text-sm">A compact, low-cost hardware sensor designed to attach to vehicle roofs. Measures PM2.5, PM10, and NO2 in motion.</p>
+                </div>
+
+                <div class="glass-card p-8 text-center relative hover:-translate-y-2 transition-transform duration-300">
+                    <div class="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center text-2xl mb-6 shadow-lg">
+                        <i class="fas fa-network-wired text-blue-400"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Mesh Network</h3>
+                    <p class="text-gray-400 text-sm">Data collected from taxis and buses creates a live heatmap of street-level pollution.</p>
+                </div>
+
+                <div class="glass-card p-8 text-center relative hover:-translate-y-2 transition-transform duration-300">
+                    <div class="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center text-2xl mb-6 shadow-lg">
+                        <i class="fas fa-brain text-purple-400"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Predictive AI</h3>
+                    <p class="text-gray-400 text-sm">Our algorithms process this mobile data to predict pollution spikes before they happen.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="py-10 text-center border-t border-white/5 bg-black/40 text-sm text-gray-500">
+        <p>&copy; 2025 AirSight. Tech for a Cleaner Future.</p>
+    </footer>
+
+    <script>
+        // 1. Init AOS
+        AOS.init({ duration: 800, once: true });
+
+        // 2. Pollutant Dropping Effect (Canvas)
+        const canvas = document.getElementById('pollutant-canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const particles = [];
+        class Particle {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.size = Math.random() * 2 + 0.5;
+                this.speedY = Math.random() * 1 + 0.5; // Falling speed
+                this.opacity = Math.random() * 0.5;
+            }
+            update() {
+                this.y += this.speedY; // Move down
+                if (this.y > canvas.height) {
+                    this.y = 0 - this.size;
+                    this.x = Math.random() * canvas.width;
+                }
+            }
+            draw() {
+                ctx.fillStyle = `rgba(150, 160, 155, ${this.opacity})`; // Grayish Dust color
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function initParticles() {
+            for (let i = 0; i < 100; i++) particles.push(new Particle());
+        }
+        function animateParticles() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            particles.forEach(p => { p.update(); p.draw(); });
+            requestAnimationFrame(animateParticles);
+        }
+        initParticles();
+        animateParticles();
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+
+        // 3. Map Setup (Dark Mode)
+        const map = L.map('map').setView([20.5937, 78.9629], 4); 
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; CARTO',
+            maxZoom: 19
+        }).addTo(map);
+
+        const cities = [
+            {lat: 28.6139, lng: 77.2090, aqi: 134, name: "Delhi"},
+            {lat: 19.0760, lng: 72.8777, aqi: 85, name: "Mumbai"},
+            {lat: 12.9716, lng: 77.5946, aqi: 45, name: "Bangalore"},
+            {lat: 22.5726, lng: 88.3639, aqi: 110, name: "Kolkata"}
+        ];
+
+        cities.forEach(city => {
+            let color = city.aqi > 100 ? '#eab308' : (city.aqi > 200 ? '#ef4444' : '#22c55e');
+            L.circleMarker([city.lat, city.lng], {
+                radius: 6,
+                fillColor: color,
+                color: "#fff",
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(map).bindPopup(`<b>${city.name}</b><br>AQI: ${city.aqi}`);
+        });
+
+        // 4. Prediction Chart
+        const chartCtx = document.getElementById('predictionChart').getContext('2d');
+        const gradient = chartCtx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(73, 167, 96, 0.4)');
+        gradient.addColorStop(1, 'rgba(73, 167, 96, 0.0)');
+
+        window.predictionChart = new Chart(chartCtx, {
+            type: 'line',
+            data: {
+                labels: ['Now', '2 PM', '4 PM', '6 PM', '8 PM', '10 PM', '12 AM'],
+                datasets: [{
+                    label: 'Predicted AQI',
+                    data: [134, 140, 155, 160, 145, 130, 120],
+                    borderColor: '#49a760',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: '#000',
+                    pointBorderColor: '#00ff9d',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+
+        // 5. Search Logic - Integrated with Flask Backend
+        const API_BASE_URL = '/api';
+        let currentSearchType = 'city'; // 'city' or 'state'
+        
+        // City to coordinates mapping
+        const cityCoordinates = {
+            'delhi': { lat: 28.6139, lon: 77.2090, name: 'New Delhi', state: 'Delhi' },
+            'mumbai': { lat: 19.0760, lon: 72.8777, name: 'Mumbai', state: 'Maharashtra' },
+            'bangalore': { lat: 12.9716, lon: 77.5946, name: 'Bangalore', state: 'Karnataka' },
+            'kolkata': { lat: 22.5726, lon: 88.3639, name: 'Kolkata', state: 'West Bengal' },
+            'chennai': { lat: 13.0827, lon: 80.2707, name: 'Chennai', state: 'Tamil Nadu' },
+            'hyderabad': { lat: 17.3850, lon: 78.4867, name: 'Hyderabad', state: 'Telangana' },
+            'pune': { lat: 18.5204, lon: 73.8567, name: 'Pune', state: 'Maharashtra' },
+            'ahmedabad': { lat: 23.0225, lon: 72.5714, name: 'Ahmedabad', state: 'Gujarat' },
+            'surat': { lat: 21.1702, lon: 72.8311, name: 'Surat', state: 'Gujarat' },
+            'jaipur': { lat: 26.9124, lon: 75.7873, name: 'Jaipur', state: 'Rajasthan' },
+            'lucknow': { lat: 26.8467, lon: 80.9462, name: 'Lucknow', state: 'Uttar Pradesh' },
+            'kanpur': { lat: 26.4499, lon: 80.3319, name: 'Kanpur', state: 'Uttar Pradesh' },
+            'nagpur': { lat: 21.1458, lon: 79.0882, name: 'Nagpur', state: 'Maharashtra' },
+            'indore': { lat: 22.7196, lon: 75.8577, name: 'Indore', state: 'Madhya Pradesh' },
+            'thane': { lat: 19.2183, lon: 72.9781, name: 'Thane', state: 'Maharashtra' },
+            'bhopal': { lat: 23.2599, lon: 77.4126, name: 'Bhopal', state: 'Madhya Pradesh' },
+            'visakhapatnam': { lat: 17.6868, lon: 83.2185, name: 'Visakhapatnam', state: 'Andhra Pradesh' },
+            'patna': { lat: 25.5941, lon: 85.1376, name: 'Patna', state: 'Bihar' },
+            'vadodara': { lat: 22.3072, lon: 73.1812, name: 'Vadodara', state: 'Gujarat' },
+            'ghaziabad': { lat: 28.6692, lon: 77.4538, name: 'Ghaziabad', state: 'Uttar Pradesh' },
+            'ludhiana': { lat: 30.9010, lon: 75.8573, name: 'Ludhiana', state: 'Punjab' },
+            'agra': { lat: 27.1767, lon: 78.0081, name: 'Agra', state: 'Uttar Pradesh' },
+            'nashik': { lat: 19.9975, lon: 73.7898, name: 'Nashik', state: 'Maharashtra' },
+            'faridabad': { lat: 28.4089, lon: 77.3178, name: 'Faridabad', state: 'Haryana' },
+            'meerut': { lat: 28.9845, lon: 77.7064, name: 'Meerut', state: 'Uttar Pradesh' },
+            'rajkot': { lat: 22.3039, lon: 70.8022, name: 'Rajkot', state: 'Gujarat' },
+            'varanasi': { lat: 25.3176, lon: 82.9739, name: 'Varanasi', state: 'Uttar Pradesh' },
+            'srinagar': { lat: 34.0837, lon: 74.7973, name: 'Srinagar', state: 'Jammu and Kashmir' },
+            'amritsar': { lat: 31.6340, lon: 74.8723, name: 'Amritsar', state: 'Punjab' },
+            'chandigarh': { lat: 30.7333, lon: 76.7794, name: 'Chandigarh', state: 'Chandigarh' }
+        };
+        
+        // State to cities mapping
+        const stateToCities = {
+            'delhi': ['delhi'],
+            'maharashtra': ['mumbai', 'pune', 'nagpur', 'thane', 'nashik'],
+            'karnataka': ['bangalore'],
+            'west bengal': ['kolkata'],
+            'tamil nadu': ['chennai'],
+            'telangana': ['hyderabad'],
+            'gujarat': ['ahmedabad', 'surat', 'vadodara', 'rajkot'],
+            'rajasthan': ['jaipur'],
+            'uttar pradesh': ['lucknow', 'kanpur', 'ghaziabad', 'agra', 'meerut', 'varanasi'],
+            'punjab': ['ludhiana', 'amritsar'],
+            'madhya pradesh': ['indore', 'bhopal'],
+            'andhra pradesh': ['visakhapatnam'],
+            'bihar': ['patna'],
+            'haryana': ['faridabad'],
+            'jammu and kashmir': ['srinagar'],
+            'chandigarh': ['chandigarh']
+        };
+        
+        // State capital coordinates (for state-level search)
+        const stateCapitals = {
+            'delhi': { lat: 28.6139, lon: 77.2090, name: 'Delhi', capital: 'New Delhi' },
+            'maharashtra': { lat: 19.0760, lon: 72.8777, name: 'Maharashtra', capital: 'Mumbai' },
+            'karnataka': { lat: 12.9716, lon: 77.5946, name: 'Karnataka', capital: 'Bangalore' },
+            'west bengal': { lat: 22.5726, lon: 88.3639, name: 'West Bengal', capital: 'Kolkata' },
+            'tamil nadu': { lat: 13.0827, lon: 80.2707, name: 'Tamil Nadu', capital: 'Chennai' },
+            'telangana': { lat: 17.3850, lon: 78.4867, name: 'Telangana', capital: 'Hyderabad' },
+            'gujarat': { lat: 23.0225, lon: 72.5714, name: 'Gujarat', capital: 'Ahmedabad' },
+            'rajasthan': { lat: 26.9124, lon: 75.7873, name: 'Rajasthan', capital: 'Jaipur' },
+            'uttar pradesh': { lat: 26.8467, lon: 80.9462, name: 'Uttar Pradesh', capital: 'Lucknow' },
+            'punjab': { lat: 30.7333, lon: 76.7794, name: 'Punjab', capital: 'Chandigarh' },
+            'madhya pradesh': { lat: 23.2599, lon: 77.4126, name: 'Madhya Pradesh', capital: 'Bhopal' },
+            'andhra pradesh': { lat: 17.6868, lon: 83.2185, name: 'Andhra Pradesh', capital: 'Visakhapatnam' },
+            'bihar': { lat: 25.5941, lon: 85.1376, name: 'Bihar', capital: 'Patna' },
+            'haryana': { lat: 28.4089, lon: 77.3178, name: 'Haryana', capital: 'Chandigarh' },
+            'jammu and kashmir': { lat: 34.0837, lon: 74.7973, name: 'Jammu and Kashmir', capital: 'Srinagar' },
+            'chandigarh': { lat: 30.7333, lon: 76.7794, name: 'Chandigarh', capital: 'Chandigarh' }
+        };
+
+        async function fetchAQIData(lat, lon) {
+            try {
+                const url = `${API_BASE_URL}/aqi/current?lat=${lat}&lon=${lon}`;
+                console.log('Fetching from:', url);
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    mode: 'cors',
+                    cache: 'no-cache'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Data received:', data);
+                return data;
+            } catch (error) {
+                console.error('Error fetching AQI data:', error);
+                console.error('Error details:', error.message);
+                // Return null to trigger fallback
+                return null;
+            }
+        }
+
+        function updateUI(data) {
+            if (!data || !data.current) return;
+            
+            const current = data.current;
+            const weather = data.weather || {};
+            const sources = data.sources || {};
+            
+            // Update AQI
+            const aqi = Math.round(current.aqi || 0);
+            document.getElementById('aqiValue').innerText = aqi;
+            
+            // Update city name
+            if (data.current.location) {
+                document.getElementById('cityName').innerText = data.current.location.name || 'New Delhi';
+            }
+            
+            // Update AQI status
+            let status = 'Good';
+            let statusColor = 'green';
+            if (aqi > 300) { status = 'Hazardous'; statusColor = 'red'; }
+            else if (aqi > 200) { status = 'Very Unhealthy'; statusColor = 'red'; }
+            else if (aqi > 150) { status = 'Unhealthy'; statusColor = 'red'; }
+            else if (aqi > 100) { status = 'Unhealthy Sensitive'; statusColor = 'orange'; }
+            else if (aqi > 50) { status = 'Moderate'; statusColor = 'yellow'; }
+            
+            const statusBox = document.getElementById('aqiStatusBox');
+            statusBox.innerText = status;
+            statusBox.className = `px-5 py-2 bg-${statusColor}-500/10 border border-${statusColor}-500/40 text-${statusColor}-400 rounded-lg font-bold text-sm tracking-wider uppercase`;
+            
+            // Update pollutants
+            const pm25 = Math.round(current.pm25 || 0);
+            const pm10 = Math.round(current.pm10 || 0);
+            const temp = Math.round(weather.temperature || 28);
+            
+            // Update pollutant displays (if elements exist)
+            const pm25El = document.querySelector('[data-pollutant="pm25"]');
+            const pm10El = document.querySelector('[data-pollutant="pm10"]');
+            const tempEl = document.querySelector('[data-pollutant="temp"]');
+            
+            if (pm25El) pm25El.innerText = pm25;
+            if (pm10El) pm10El.innerText = pm10;
+            if (tempEl) tempEl.innerText = `${temp}°C`;
+            
+            // Update predictions chart
+            if (data.predictions && window.predictionChart) {
+                const predictions = data.predictions.slice(0, 7);
+                window.predictionChart.data.labels = predictions.map(p => {
+                    const date = new Date(p.time);
+                    return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                });
+                window.predictionChart.data.datasets[0].data = predictions.map(p => Math.round(p.aqi || 0));
+                window.predictionChart.update();
+            }
+        }
+
+        // Set search type (city or state)
+        function setSearchType(type) {
+            currentSearchType = type;
+            const cityBtn = document.getElementById('searchTypeCity');
+            const stateBtn = document.getElementById('searchTypeState');
+            const stateSelector = document.getElementById('stateSelector');
+            const searchInput = document.getElementById('searchInput');
+            
+            if (type === 'city') {
+                cityBtn.className = 'px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-[#3d8b50] transition-colors';
+                stateBtn.className = 'px-4 py-2 glass-card hover:bg-white/10 font-medium text-white transition-colors';
+                stateSelector.classList.add('hidden');
+                searchInput.placeholder = 'Enter City Name (e.g. Delhi, Mumbai, Bangalore)';
+            } else {
+                cityBtn.className = 'px-4 py-2 glass-card hover:bg-white/10 font-medium text-white transition-colors';
+                stateBtn.className = 'px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-[#3d8b50] transition-colors';
+                stateSelector.classList.remove('hidden');
+                searchInput.placeholder = 'Enter State Name (e.g. Maharashtra, Karnataka)';
+            }
+        }
+        
+        // Select state from quick buttons
+        function selectState(stateName) {
+            document.getElementById('searchInput').value = stateName;
+            handleSearch();
+        }
+        
+        async function handleSearch() {
+            const input = document.getElementById('searchInput').value.trim().toLowerCase();
+            if (!input) return;
+            
+            let coords = null;
+            let displayName = '';
+            
+            if (currentSearchType === 'city') {
+                // City search
+                coords = cityCoordinates[input];
+                if (!coords) {
+                    // Try to find partial match
+                    for (const [key, value] of Object.entries(cityCoordinates)) {
+                        if (key.includes(input) || value.name.toLowerCase().includes(input)) {
+                            coords = value;
+                            break;
+                        }
+                    }
+                }
+                if (coords) {
+                    displayName = coords.name;
+                }
+            } else {
+                // State search
+                const stateKey = input.replace(/\s+/g, ' ').toLowerCase();
+                coords = stateCapitals[stateKey];
+                if (!coords) {
+                    // Try partial match
+                    for (const [key, value] of Object.entries(stateCapitals)) {
+                        if (key.includes(input) || value.name.toLowerCase().includes(input)) {
+                            coords = value;
+                            break;
+                        }
+                    }
+                }
+                if (coords) {
+                    displayName = `${coords.capital}, ${coords.name}`;
+                }
+            }
+            
+            if (!coords) {
+                const searchType = currentSearchType === 'city' ? 'City' : 'State';
+                const examples = currentSearchType === 'city' 
+                    ? 'Delhi, Mumbai, Bangalore, Kolkata, Chennai, Hyderabad, Pune, Ahmedabad'
+                    : 'Maharashtra, Karnataka, West Bengal, Tamil Nadu, Telangana, Gujarat, Rajasthan, Uttar Pradesh';
+                alert(`${searchType} not found. Please try: ${examples}`);
+                return;
+            }
+            
+            // Show loading state
+            document.getElementById('aqiValue').innerText = '...';
+            
+            // Fetch data from backend
+            const data = await fetchAQIData(coords.lat, coords.lon);
+            
+            if (data) {
+                // Add location name to data
+                if (data.current && data.current.location) {
+                    data.current.location.name = displayName;
+                }
+                updateUI(data);
+            } else {
+                // Fallback to mock data
+                document.getElementById('cityName').innerText = displayName;
+                const mockAQI = Math.floor(Math.random() * 200) + 20;
+                document.getElementById('aqiValue').innerText = mockAQI;
+                alert('Using demo data. Make sure backend is running on port 5000.');
+            }
+        }
+        
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if(e.key === 'Enter') handleSearch();
+        });
+        
+        // Load initial data for Delhi
+        window.addEventListener('load', async () => {
+            // Wait a bit for backend to be ready
+            setTimeout(async () => {
+                const delhiData = await fetchAQIData(28.6139, 77.2090);
+                if (delhiData) {
+                    if (delhiData.current && delhiData.current.location) {
+                        delhiData.current.location.name = 'New Delhi';
+                    }
+                    updateUI(delhiData);
+                } else {
+                    // Show user-friendly message instead of error
+                    console.log('Backend not available, using demo data');
+                    // Set demo data
+                    document.getElementById('cityName').innerText = 'New Delhi';
+                    document.getElementById('aqiValue').innerText = '180';
+                }
+            }, 1000);
+        });
+        
+        // Load initial data for Delhi
+        window.addEventListener('load', async () => {
+            const delhiData = await fetchAQIData(28.6139, 77.2090);
+            if (delhiData) {
+                if (delhiData.current && delhiData.current.location) {
+                    delhiData.current.location.name = 'New Delhi';
+                }
+                updateUI(delhiData);
+            }
+        });
+    </script>
+</body>
+</html>
